@@ -1,4 +1,4 @@
-import argparse, os, re
+import argparse, os, re, sys #Fluffy: Added sys for saving prompt.txt
 import torch
 import numpy as np
 from random import randint
@@ -16,6 +16,7 @@ from einops import rearrange, repeat
 from ldm.util import instantiate_from_config
 from optimUtils import split_weighted_subprompts, logger
 from transformers import logging
+from datetime import datetime #Fluffy: For adding dates to output dir
 import pandas as pd
 import safeloader
 import simulacra
@@ -268,13 +269,34 @@ if opt.aesthetic_threshold > 10:
     raise Exception("Option --aesthetic-threshold can't be greater than 10!")
 
 tic = time.time()
-os.makedirs(opt.outdir, exist_ok=True)
-outpath = opt.outdir
+
+#Fluffy: Add date to output path
+OUT_PROMPT_TR = {
+    ord(' '): '_',
+    ord('/'): None,
+    ord('\\'): None,
+    ord(':'): None,
+    ord(';'): None,
+    ord('?'): None,
+    ord('*'): None,
+}
+curDT = datetime.now() #Get current date and time
+date_time_str = curDT.strftime("%Y-%m-%d\%H-%M ") + opt.prompt.translate(OUT_PROMPT_TR)[:50] #Create string with date and time and parts of the prompt (limit to 50 characters)
+outpath = os.path.join(opt.outdir, date_time_str) #Add date and time to final output path
+os.makedirs(outpath, exist_ok=True)
+
 grid_count = len(os.listdir(outpath)) - 1
 
 if opt.seed == None:
     opt.seed = randint(0, 1000000)
 seed_everything(opt.seed)
+
+#Fluffy: Write text file with full prompt
+prompt_file_path = outpath + "\prompt.txt"
+prompt_file = open(prompt_file_path, "w")
+args_as_one_string = ' '.join(sys.argv[1:])
+prompt_file.write(args_as_one_string)
+prompt_file.close()
 
 # Logging
 logger(vars(opt), log_csv = "logs/img2img_logs.csv")
@@ -372,13 +394,7 @@ with torch.no_grad():
     all_samples = list()
     for n in trange(opt.n_iter, desc="Sampling"):
         for prompts in tqdm(data, desc="data"):
-            sample_path = os.path.join(outpath,
-                                       "_".join(re.split(":| ",
-                                                         prompts[0])))[:150]
-            if prompts[0] == "":
-                sample_path = os.path.join(outpath, "empty_prompt")
-            os.makedirs(sample_path, exist_ok=True)
-            base_count = len(os.listdir(sample_path))
+            #Fluffy: Removed a few lines related to file path since we've changed how create path for images
 
             with precision_scope("cuda"):
                 modelCS.to(opt.device)
@@ -428,13 +444,13 @@ with torch.no_grad():
                                            max=1.0)
                     x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(),
                                                  "c h w -> h w c")
-                    dest_path = os.path.join(sample_path,
-                                             f"seed_{opt.seed}_{base_count:05}.{opt.format}")
+                    dest_path = os.path.join(outpath, #Fluffy: Replaced sample_path with outpath
+                                             f"seed_{opt.seed}.{opt.format}") #Fluffy: Removed base_count
                     dest_paths.append(dest_path)
                     Image.fromarray(x_sample.astype(np.uint8)).save(dest_path)
                     seeds += str(opt.seed) + ","
                     opt.seed += 1
-                    base_count += 1
+                    #Fluffy: Removed base_count
 
                 del samples_ddim
                 print("memory_final = ", torch.cuda.memory_allocated(device=opt.device) / 1e6)
@@ -443,7 +459,7 @@ toc = time.time()
 time_taken = (toc - tic) / 60.0
 
 print(f"Samples finished in {time_taken:.2f} minutes "
-      f"and exported to {sample_path}")
+      f"and exported to {outpath}") #Fluffy: Replaced sample_path with outpath
 print(f" Seeds used = {seeds[:-1]}")
 print("Images with aesthetic scores:")
 for img_path in dest_paths:
